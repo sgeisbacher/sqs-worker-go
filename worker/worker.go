@@ -14,16 +14,6 @@ import (
 // HandlerFunc is used to define the Handler that is run on for each message
 type HandlerFunc func(msg *sqs.Message) error
 
-// HandleMessage is used for the actual execution of each message
-func (f HandlerFunc) HandleMessage(msg *sqs.Message) error {
-	return f(msg)
-}
-
-// Handler interface
-type Handler interface {
-	HandleMessage(msg *sqs.Message) error
-}
-
 // InvalidMessageError for message that can't be processed and should be deleted
 type InvalidMessageError struct {
 	SQSMessage string
@@ -90,7 +80,7 @@ func NewService(n string) (*Service, error) {
 }
 
 // Start starts the polling and will continue polling till the application is forcibly stopped
-func (s *Service) Start(h Handler) {
+func (s *Service) Start(handler HandlerFunc) {
 	for {
 		params := &sqs.ReceiveMessageInput{
 			QueueUrl:            aws.String(s.JobSQSURL), // Required
@@ -107,13 +97,13 @@ func (s *Service) Start(h Handler) {
 			continue
 		}
 		if len(resp.Messages) > 0 {
-			run(s, h, resp.Messages)
+			run(s, handler, resp.Messages)
 		}
 	}
 }
 
 // poll launches goroutine per received message and wait for all message to be processed
-func run(s *Service, h Handler, messages []*sqs.Message) {
+func run(s *Service, handler HandlerFunc, messages []*sqs.Message) {
 	numMessages := len(messages)
 
 	var wg sync.WaitGroup
@@ -122,7 +112,7 @@ func run(s *Service, h Handler, messages []*sqs.Message) {
 		go func(m *sqs.Message) {
 			// launch goroutine
 			defer wg.Done()
-			if err := handleMessage(s, m, h); err != nil {
+			if err := handleMessage(s, m, handler); err != nil {
 				log.Println(err.Error())
 			}
 		}(messages[i])
@@ -135,8 +125,8 @@ func (s *Service) shouldBackup() bool {
 	return (s.BackupFirehose != nil && s.BackupFirehoseName != "")
 }
 
-func handleMessage(s *Service, m *sqs.Message, h Handler) error {
-	err := h.HandleMessage(m)
+func handleMessage(s *Service, m *sqs.Message, handler HandlerFunc) error {
+	err := handler(m)
 	if _, ok := err.(InvalidMessageError); ok {
 		// Invalid message encountered. Swallow the error and delete the message
 		log.Println(err.Error())
